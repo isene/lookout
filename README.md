@@ -1,5 +1,11 @@
 # lookout
 
+<img src="img/lookout.svg" align="right" width="150">
+
+**Your servers at a glance: every check as a status and a graph. Written in Rust.**
+
+![Version](https://img.shields.io/badge/version-0.1.3-blue) ![Rust](https://img.shields.io/badge/language-Rust-f74c00) ![License](https://img.shields.io/badge/license-Unlicense-green) ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue) ![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-important)
+
 Server checks as statuses and graphs, in the terminal. Part of the
 [Fe2O3](https://github.com/isene/fe2o3) suite, built on
 [crust](https://github.com/isene/crust) and

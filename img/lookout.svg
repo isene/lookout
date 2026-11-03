@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e"/>
+      <stop offset="100%" style="stop-color:#0a0a14"/>
+    </linearGradient>
+    <linearGradient id="rust" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f74c00"/>
+      <stop offset="100%" style="stop-color:#b7410e"/>
+    </linearGradient>
+  </defs>
+  <style>
+    @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.2; } }
+    .warn { animation: blink 1.4s ease-in-out infinite; }
+  </style>
+  <circle cx="128" cy="128" r="120" fill="url(#bg)" stroke="url(#rust)" stroke-width="3"/>
+
+  <!-- A graph of answer times -->
+  <polyline points="58,104 80,94 98,100 116,74 134,90 152,66 170,82 198,72"
+            fill="none" stroke="#99ccff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Three servers, each with its status light -->
+  <g fill="#2a2d3e" stroke="#8a90b8" stroke-width="2">
+    <rect x="70" y="122" width="116" height="26" rx="5"/>
+    <rect x="70" y="154" width="116" height="26" rx="5"/>
+    <rect x="70" y="186" width="116" height="26" rx="5"/>
+  </g>
+  <g fill="#8a90b8" opacity="0.5">
+    <rect x="82" y="133" width="52" height="4" rx="2"/>
+    <rect x="82" y="165" width="52" height="4" rx="2"/>
+    <rect x="82" y="197" width="52" height="4" rx="2"/>
+  </g>
+  <circle cx="168" cy="135" r="6" fill="#4caf50"/>
+  <circle cx="168" cy="167" r="6" fill="#4caf50"/>
+  <circle class="warn" cx="168" cy="199" r="6" fill="#ffb300"/>
+</svg>
