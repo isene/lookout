@@ -23,7 +23,7 @@ Usage: lookout
 
 Each server runs fleet's server/checkup.py from cron. lookout reads its
 ~/.checkup and follows its ~/.checkup.log over ssh while it is open.
-In ~/.checkup a line starting with \"## \" is a heading in the list.
+In ~/.checkup a line starting with \"## \" starts a server.
 
 Keys: j/k or arrows move, t shows 24 hours or 7 days, q quits.";
 
@@ -38,6 +38,7 @@ const PANEL_BG: u16 = 16;
 const HEAD_BG: u16 = 236;
 const SEL_BG: u8 = 237;
 const OK: u8 = 71;
+const WARN: u8 = 214;
 const FAIL: u8 = 203;
 const DIM: u8 = 245;
 const LINE: u8 = 75;
@@ -73,11 +74,66 @@ struct Host {
     gone: Option<String>,
 }
 
-/// A row of the list: a heading, or a host's check.
+/// A server in the list: a "## " heading of ~/.checkup and the checks
+/// under it. Checks above the first heading go under the host's name.
+struct Group {
+    host: usize,
+    title: String,
+    checks: Vec<String>,
+}
+
+/// A row of the list: a server, or one of its checks.
 #[derive(Clone, PartialEq)]
 enum Row {
-    Head(String),
+    Group(usize),
     Check(usize, String, String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum State {
+    Unknown,
+    Fine,
+    /// Works now, but failed in the last 24 hours.
+    Shaky,
+    Failing,
+}
+
+fn check_state(runs: Option<&VecDeque<Run>>) -> State {
+    let Some(last) = runs.and_then(|q| q.back()) else {
+        return State::Unknown;
+    };
+    if !last.why.is_empty() {
+        return State::Failing;
+    }
+    let q = runs.unwrap();
+    let shaky = q.iter().rev().take_while(|r| r.t > last.t - 86400).any(|r| !r.why.is_empty());
+    if shaky {
+        State::Shaky
+    } else {
+        State::Fine
+    }
+}
+
+fn color(s: State) -> u8 {
+    match s {
+        State::Unknown => DIM,
+        State::Fine => OK,
+        State::Shaky => WARN,
+        State::Failing => FAIL,
+    }
+}
+
+/// A server's colour and note: red when every check fails, amber when
+/// some do, green when none do.
+fn group_state(states: &[State]) -> (u8, String) {
+    let known = states.iter().filter(|s| **s != State::Unknown).count();
+    let failing = states.iter().filter(|s| **s == State::Failing).count();
+    match (known, failing) {
+        (0, _) => (DIM, String::new()),
+        (k, f) if f == k => (FAIL, "down".into()),
+        (_, 0) => (OK, String::new()),
+        (_, f) => (WARN, format!("{f} down")),
+    }
 }
 
 /// The ~/.checkup lines that are checks, and the "## " headings.
@@ -253,6 +309,7 @@ fn follow(i: usize, target: String, tx: Sender<Msg>, slot: Arc<Mutex<Option<Chil
 struct App {
     hosts: Vec<Host>,
     runs: HashMap<(usize, String), VecDeque<Run>>,
+    groups: Vec<Group>,
     rows: Vec<Row>,
     sel: usize,
     days: i64,
@@ -280,6 +337,7 @@ impl App {
         let mut app = App {
             hosts,
             runs: HashMap::new(),
+            groups: Vec::new(),
             rows: Vec::new(),
             sel: 0,
             days: 1,
@@ -291,6 +349,7 @@ impl App {
             children,
         };
         app.layout();
+        app.rebuild_rows();
         app
     }
 
@@ -334,17 +393,31 @@ impl App {
         }
     }
 
-    /// The list: per server its name as a heading, then its checks.
+    /// The list: each server, then its checks.
     fn rebuild_rows(&mut self) {
-        let keep = self.rows.get(self.sel).cloned();
+        let keep = self.rows.get(self.sel).filter(|r| matches!(r, Row::Check(..))).cloned();
         self.rows.clear();
+        self.groups.clear();
         for (i, h) in self.hosts.iter().enumerate() {
-            self.rows.push(Row::Head(h.name.clone()));
+            let first = self.groups.len();
             for it in &h.items {
-                self.rows.push(match it {
-                    Item::Head(t) => Row::Head(t.clone()),
-                    Item::Check(k, n) => Row::Check(i, k.clone(), n.clone()),
-                });
+                let title = match it {
+                    Item::Head(t) => Some(t.clone()),
+                    Item::Check(..) if self.groups.len() == first => Some(h.name.clone()),
+                    Item::Check(..) => None,
+                };
+                if let Some(title) = title {
+                    self.groups.push(Group { host: i, title, checks: Vec::new() });
+                    self.rows.push(Row::Group(self.groups.len() - 1));
+                }
+                if let Item::Check(k, n) = it {
+                    self.groups.last_mut().unwrap().checks.push(n.clone());
+                    self.rows.push(Row::Check(i, k.clone(), n.clone()));
+                }
+            }
+            if self.groups.len() == first {
+                self.groups.push(Group { host: i, title: h.name.clone(), checks: Vec::new() });
+                self.rows.push(Row::Group(first));
             }
         }
         self.sel = keep
@@ -370,25 +443,38 @@ impl App {
         self.runs.get(&(host, name.to_string())).and_then(|q| q.back())
     }
 
+    fn state(&self, host: usize, name: &str) -> State {
+        check_state(self.runs.get(&(host, name.to_string())))
+    }
+
+    /// A server's title in its colour, with "down" or "2 down" after it.
+    /// With no connection to its host, the host's first server is red.
+    fn group_label(&self, gi: usize) -> String {
+        let g = &self.groups[gi];
+        let (c, note) = if self.hosts[g.host].gone.is_some() {
+            let first = self.groups.iter().position(|x| x.host == g.host) == Some(gi);
+            if first {
+                (FAIL, "no connection".to_string())
+            } else {
+                (DIM, String::new())
+            }
+        } else {
+            let states: Vec<State> = g.checks.iter().map(|n| self.state(g.host, n)).collect();
+            group_state(&states)
+        };
+        let text = if note.is_empty() { g.title.clone() } else { format!("{}  {note}", g.title) };
+        style::fg(&style::bold(&text), c)
+    }
+
     fn render_top(&mut self) {
-        let t = now();
         let mut parts = vec![style::bold(" lookout")];
-        for (i, h) in self.hosts.iter().enumerate() {
-            let failing = self
-                .runs
-                .iter()
-                .filter(|((hi, _), q)| *hi == i && q.back().is_some_and(|r| r.t == h.last && !r.why.is_empty()))
-                .count();
-            let state = match (&h.gone, h.last) {
-                (Some(why), _) => style::fg(&format!("no connection: {why}"), FAIL),
-                (None, 0) => style::fg("connecting", DIM),
-                (None, last) if failing > 0 => {
-                    style::fg(&format!("{failing} failing, {}", ago(t - last)), FAIL)
-                }
-                (None, last) => style::fg(&format!("all fine, {}", ago(t - last)), OK),
-            };
-            parts.push(format!("{}  {state}", h.name));
-        }
+        parts.extend((0..self.groups.len()).map(|gi| self.group_label(gi)));
+        let note = match self.hosts.iter().map(|h| h.last).min().unwrap_or(0) {
+            0 if self.hosts.iter().any(|h| h.gone.is_none()) => "connecting".to_string(),
+            0 => String::new(),
+            last => format!("updated {}", ago(now() - last)),
+        };
+        parts.push(style::fg(&note, DIM));
         parts.push(style::fg("j/k move  t 24 h or 7 days  q quit", DIM));
         self.top.set_text(&parts.join("    "));
         self.top.refresh();
@@ -400,15 +486,20 @@ impl App {
         let mut lines = Vec::new();
         for r in range {
             let line = match &self.rows[r] {
-                Row::Head(t) => style::bold(&fit(&format!(" {t}"), w)),
+                Row::Group(gi) => format!(" {}", self.group_label(*gi)),
                 Row::Check(h, kind, name) => {
-                    let (mark, text, color) = match self.last_run(*h, name) {
-                        None => ("○", "no runs yet".to_string(), DIM),
-                        Some(run) if !run.why.is_empty() => ("●", run.why.clone(), FAIL),
-                        Some(run) => ("●", run.value.map(|v| unit(kind, v)).unwrap_or("running".into()), OK),
+                    let state = self.state(*h, name);
+                    let text = match self.last_run(*h, name) {
+                        None => "no runs yet".to_string(),
+                        Some(run) if !run.why.is_empty() => run.why.clone(),
+                        Some(run) => run.value.map(|v| unit(kind, v)).unwrap_or("running".into()),
                     };
-                    let body = format!("{} {}", fit(name, 14), fit(&text, w.saturating_sub(19)));
-                    let line = format!("  {} {}", style::fg(mark, color), body);
+                    let mut text = fit(&text, w.saturating_sub(19));
+                    if state != State::Fine && state != State::Shaky {
+                        text = style::fg(&text, color(state));
+                    }
+                    let mark = if state == State::Unknown { "○" } else { "●" };
+                    let line = format!("  {} {} {text}", style::fg(mark, color(state)), fit(name, 14));
                     if r == self.sel {
                         style::bg(&line, SEL_BG)
                     } else {
@@ -610,6 +701,25 @@ mod tests {
     fn a_long_series_is_averaged_down_to_the_dots_across() {
         assert_eq!(squeeze(&[1.0, 3.0, 5.0, 7.0], 2), vec![2.0, 6.0]);
         assert_eq!(squeeze(&[1.0, 2.0], 10), vec![1.0, 2.0]);
+    }
+
+    #[test]
+    fn a_check_is_amber_for_a_day_after_it_failed() {
+        let run = |t, why: &str| Run { t, value: None, why: why.into() };
+        let q = |runs: Vec<Run>| runs.into_iter().collect::<VecDeque<Run>>();
+        assert_eq!(check_state(None), State::Unknown);
+        assert_eq!(check_state(Some(&q(vec![run(1, ""), run(2, "down")]))), State::Failing);
+        assert_eq!(check_state(Some(&q(vec![run(1, "down"), run(2, "")]))), State::Shaky);
+        assert_eq!(check_state(Some(&q(vec![run(1, "down"), run(90000, "")]))), State::Fine);
+    }
+
+    #[test]
+    fn a_server_is_red_when_all_fail_and_amber_when_some_do() {
+        use State::*;
+        assert_eq!(group_state(&[Fine, Shaky]), (OK, String::new()));
+        assert_eq!(group_state(&[Fine, Failing, Failing]), (WARN, "2 down".into()));
+        assert_eq!(group_state(&[Failing, Unknown]), (FAIL, "down".into()));
+        assert_eq!(group_state(&[Unknown]), (DIM, String::new()));
     }
 
     #[test]
