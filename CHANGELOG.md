@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3 (2026-11-03)
+
+- Follows each log with GNU tail (`gnutail`) where it exists. Ubuntu's
+  own `tail` (uutils) woke about once a second while lookout was open;
+  GNU tail sleeps until the log changes.
+
 ## 0.1.2 (2026-11-03)
 
 - The target `local` in `~/.lookoutrc` reads this machine's own checks,

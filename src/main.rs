@@ -263,10 +263,20 @@ fn reader(target: &str, cmd: &str) -> Command {
     c
 }
 
+/// The shell line that prints a server's check list, then follows its log.
+/// Ubuntu's own `tail` (uutils) wakes about once a second while it waits;
+/// GNU tail, called `gnutail` there, sleeps until the file changes.
+fn follow_cmd() -> String {
+    format!(
+        "cat .checkup; echo {SEP}; \
+         exec $(command -v gnutail || echo tail) -n {KEEP} -F .checkup.log 2>/dev/null"
+    )
+}
+
 /// Follow one server: its check list once, then each new log line.
 /// A lost connection is tried again a minute later.
 fn follow(i: usize, target: String, tx: Sender<Msg>, slot: Arc<Mutex<Option<Child>>>) {
-    let cmd = format!("cat .checkup; echo {SEP}; exec tail -n {KEEP} -F .checkup.log 2>/dev/null");
+    let cmd = follow_cmd();
     loop {
         let spawned = reader(&target, &cmd)
             .stdin(Stdio::null())
@@ -679,6 +689,25 @@ mod tests {
     fn local_reads_without_ssh() {
         assert_eq!(reader("local", "true").get_program(), "sh");
         assert_eq!(reader("me@203.0.113.5", "true").get_program(), "ssh");
+    }
+
+    #[test]
+    fn follow_prefers_gnu_tail() {
+        let d = std::env::temp_dir().join(format!("lookout-test-{}", std::process::id()));
+        std::fs::create_dir_all(d.join("bin")).unwrap();
+        std::fs::write(d.join(".checkup"), "").unwrap();
+        let stub = d.join("bin/gnutail");
+        std::fs::write(&stub, "#!/bin/sh\necho gnutail\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let out = Command::new("sh")
+            .args(["-c", &follow_cmd()])
+            .current_dir(&d)
+            .env("PATH", format!("{}:/usr/bin:/bin", d.join("bin").display()))
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(&d).unwrap();
+        assert!(String::from_utf8_lossy(&out.stdout).ends_with("gnutail\n"));
     }
 
     #[test]
