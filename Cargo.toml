@@ -1,0 +1,17 @@
+[package]
+name = "lookout"
+version = "0.1.0"
+edition = "2021"
+authors = ["Geir Isene <g@isene.com>"]
+description = "Server checks as statuses and graphs, in the terminal"
+license = "Unlicense"
+repository = "https://github.com/isene/lookout"
+
+[dependencies]
+crust = { version = "0.1", path = "../crust", package = "fe2o3-crust" }
+plot = { version = "0.1.1", path = "../plot", package = "fe2o3-plot" }
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
