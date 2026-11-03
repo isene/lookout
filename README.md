@@ -22,8 +22,11 @@ every 5 minutes. lookout shows them:
 `~/.lookoutrc` names the servers, one per line:
 
 ```
-host  web  me@203.0.113.5
+host  web     me@203.0.113.5
+host  laptop  local
 ```
+
+The target `local` reads this machine's own checks, without ssh.
 
 lookout opens one ssh connection per server while it runs. It reads the
 server's `~/.checkup` once and follows its `~/.checkup.log`. In

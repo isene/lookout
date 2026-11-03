@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 (2026-11-03)
+
+- The target `local` in `~/.lookoutrc` reads this machine's own checks,
+  without ssh.
+- A release workflow builds binaries for Linux and macOS.
+
 ## 0.1.1 (2026-11-03)
 
 - Colours: a server is green, amber when some checks fail, red when all

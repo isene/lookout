@@ -20,6 +20,7 @@ Usage: lookout
 
 ~/.lookoutrc names the servers, one per line:
     host  <name>  <ssh target>
+The target \"local\" reads this machine's own checks, without ssh.
 
 Each server runs fleet's server/checkup.py from cron. lookout reads its
 ~/.checkup and follows its ~/.checkup.log over ssh while it is open.
@@ -248,15 +249,26 @@ fn strip(runs: &[&Run], w: usize) -> String {
     out
 }
 
+/// The command that reads a server's checks: ssh, or a shell for "local".
+fn reader(target: &str, cmd: &str) -> Command {
+    if target == "local" {
+        let mut c = Command::new("sh");
+        c.arg("-c").arg(cmd).current_dir(std::env::var("HOME").unwrap_or_default());
+        return c;
+    }
+    let mut c = Command::new("ssh");
+    c.args(["-o", "BatchMode=yes", "-o", "ServerAliveInterval=60", "-o", "LogLevel=ERROR"])
+        .arg(target)
+        .arg(cmd);
+    c
+}
+
 /// Follow one server: its check list once, then each new log line.
 /// A lost connection is tried again a minute later.
 fn follow(i: usize, target: String, tx: Sender<Msg>, slot: Arc<Mutex<Option<Child>>>) {
     let cmd = format!("cat .checkup; echo {SEP}; exec tail -n {KEEP} -F .checkup.log 2>/dev/null");
     loop {
-        let spawned = Command::new("ssh")
-            .args(["-o", "BatchMode=yes", "-o", "ServerAliveInterval=60", "-o", "LogLevel=ERROR"])
-            .arg(&target)
-            .arg(&cmd)
+        let spawned = reader(&target, &cmd)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -662,6 +674,12 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_reads_without_ssh() {
+        assert_eq!(reader("local", "true").get_program(), "sh");
+        assert_eq!(reader("me@203.0.113.5", "true").get_program(), "ssh");
+    }
 
     #[test]
     fn a_log_line_gives_each_check_its_number_and_trouble() {
