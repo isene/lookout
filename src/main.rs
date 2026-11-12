@@ -273,9 +273,21 @@ fn follow_cmd() -> String {
     )
 }
 
+/// A thread's way to the screen: the message, and a wake for the key
+/// wait, so lookout draws a line when it comes and sleeps until then.
+struct Tx(Sender<Msg>, Option<crust::Waker>);
+
+impl Tx {
+    fn send(&self, m: Msg) -> Result<(), std::sync::mpsc::SendError<Msg>> {
+        let sent = self.0.send(m);
+        if let Some(w) = &self.1 { w.wake(); }
+        sent
+    }
+}
+
 /// Follow one server: its check list once, then each new log line.
 /// A lost connection is tried again a minute later.
-fn follow(i: usize, target: String, tx: Sender<Msg>, slot: Arc<Mutex<Option<Child>>>) {
+fn follow(i: usize, target: String, tx: Tx, slot: Arc<Mutex<Option<Child>>>) {
     let cmd = follow_cmd();
     loop {
         let spawned = reader(&target, &cmd)
@@ -340,18 +352,22 @@ struct App {
     graph: Pane,
     graph_sig: String,
     rx: Receiver<Msg>,
+    /// What the server threads wake the key wait with. None where the
+    /// system has no such thing; lookout then looks on a timer.
+    wake: Option<crust::Wake>,
     children: Vec<Arc<Mutex<Option<Child>>>>,
 }
 
 impl App {
     fn new(servers: Vec<(String, String)>) -> App {
         let (tx, rx) = channel();
+        let wake = crust::Wake::new();
         let mut hosts = Vec::new();
         let mut children = Vec::new();
         for (i, (name, target)) in servers.into_iter().enumerate() {
             let slot = Arc::new(Mutex::new(None));
             children.push(slot.clone());
-            let tx = tx.clone();
+            let tx = Tx(tx.clone(), wake.as_ref().map(|w| w.waker()));
             std::thread::spawn(move || follow(i, target, tx, slot));
             hosts.push(Host { name, items: Vec::new(), last: 0, gone: None });
         }
@@ -368,6 +384,7 @@ impl App {
             graph: blank(),
             graph_sig: String::new(),
             rx,
+            wake,
             children,
         };
         app.layout();
@@ -612,9 +629,16 @@ impl App {
         self.render();
         let mut minute = now() / 60;
         loop {
-            // Lines come once in 5 minutes, so a key or 5 seconds wakes the loop.
-            let wait = if self.hosts.iter().all(|h| h.last > 0 || h.gone.is_some()) { 5000 } else { 300 };
+            // A key, a line from a server, or the next minute (the "ago"
+            // times) wakes the loop. With no wake, look on a timer:
+            // lines come once in 5 minutes.
+            let wait = if self.wake.is_some() {
+                (60 - now().rem_euclid(60)) as u64 * 1000
+            } else if self.hosts.iter().all(|h| h.last > 0 || h.gone.is_some()) { 5000 } else { 300 };
             let key = Input::getchr_ms(wait);
+            if key.as_deref() == Some("WAKE") {
+                if let Some(w) = self.wake.as_mut() { w.drain(); }
+            }
             let mut dirty = false;
             while let Ok(m) = self.rx.try_recv() {
                 self.take(m);
@@ -626,6 +650,7 @@ impl App {
                 Some("k") | Some("UP") => self.move_sel(-1),
                 Some("t") => self.days = if self.days == 1 { 7 } else { 1 },
                 Some("RESIZE") => self.layout(),
+                Some("WAKE") if dirty => {}
                 Some(_) => continue,
                 None if !dirty && now() / 60 == minute => continue,
                 None => {}
