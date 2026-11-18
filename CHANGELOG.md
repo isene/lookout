@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5 (2026-11-18)
+
+- The version at the bottom right, amber once lookout is rebuilt
+
 ## 0.1.3 (2026-11-03)
 
 - Follows each log with GNU tail (`gnutail`) where it exists. Ubuntu's

@@ -515,7 +515,7 @@ impl App {
         };
         parts.push(style::fg(&note, DIM));
         parts.push(style::fg("j/k move  t 24 h or 7 days  q quit", DIM));
-        self.top.set_text(&parts.join("    "));
+        self.top.set_text(&crust::with_version(&parts.join("    "), self.top.w as usize, "lookout", env!("CARGO_PKG_VERSION")));
         self.top.refresh();
     }
 
